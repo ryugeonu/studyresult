@@ -8,8 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define NUM_CPU_THREADS (4)
-
 #define ROW_SIZE (32)
 #define K_SIZE (128)
 #define COL_SIZE (32)
