@@ -1,0 +1,109 @@
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+#include <random>
+#include "DS_timer.h"
+
+#define N_DATA_FILTER           100000000
+#define NUM_THREAD              256
+#define N_DATA                  (N_DATA_FILTER - (N_DATA_FILTER % NUM_THREAD))
+#define NUM_BLOCK               N_DATA/NUM_THREAD
+#define NUM_STREAM              2
+
+DS_timer* timer;
+#define TIMER_HOST		0
+#define NUM_TIMER		1
+
+void setTimer(void);
+
+__global__ void calculator(float* _x, float* _y, int* _T) {
+    int Index = blockDim.x * blockIdx.x + threadIdx.x;
+    int mask, c = 0;
+    mask = (_x[Index] * _x[Index] + _y[Index] * _y[Index] <= 1);
+
+    __shared__ int sA[NUM_THREAD];
+    __shared__ int sB[NUM_THREAD];
+
+
+    sA[threadIdx.x] = mask;
+    sB[threadIdx.x] = 1 - mask;
+
+    __syncthreads();
+
+    if (threadIdx.x == 0) {
+        for (int i = 1; i < NUM_THREAD; i++)
+            sA[0] += sA[i];
+    }
+    if (threadIdx.x == 0)
+        atomicAdd(_T, sA[0]);
+}
+
+int main(void) {
+    timer = NULL; setTimer();
+
+    float* x = NULL;
+    float* y = NULL;
+    int* T = NULL;
+    float* dx = NULL;
+    float* dy = NULL;
+    int* dT = NULL;
+
+    x = (float*)malloc(sizeof(float) * N_DATA);
+    y = (float*)malloc(sizeof(float) * N_DATA);
+    T = (int*)malloc(sizeof(int) * 1);
+
+    if (x == NULL || y == NULL) {
+        printf("메모리 할당 실패\n");
+        exit(1);
+    }
+
+    std::random_device engine;
+    std::uniform_int_distribution<int> generator(0, 100000);
+
+
+    for (int i = 0; i < N_DATA; i++) {
+
+        x[i] = generator(engine) / 100000.0f;
+        y[i] = generator(engine) / 100000.0f;
+
+    }
+    *T = 0;
+    cudaMalloc(&dx, sizeof(float) * N_DATA);
+    cudaMalloc(&dy, sizeof(float) * N_DATA);
+    cudaMalloc(&dT, sizeof(int) * 1);
+
+    cudaMemcpy(dx, x, sizeof(float) * N_DATA, cudaMemcpyHostToDevice);
+    cudaMemcpy(dy, y, sizeof(float) * N_DATA, cudaMemcpyHostToDevice);
+    cudaMemset(dT, 0, sizeof(int) * 1);
+    timer->onTimer(0);
+    calculator << <NUM_BLOCK, NUM_THREAD >> > (dx, dy, dT);
+    cudaDeviceSynchronize();
+    timer->offTimer(0);
+    cudaMemcpy(T, dT, sizeof(int), cudaMemcpyDeviceToHost);
+
+    cudaDeviceSynchronize();
+    float approximation = 4.0f * (float)*T / (float)N_DATA;
+
+    printf("총 데이터의 수: %d\n효율을 위해 필터링 된 데이터의 수: %d\n원 내에 존재하는 난수: %d\n", N_DATA_FILTER, N_DATA_FILTER - N_DATA, *T);
+    printf("추정치: %f", approximation);
+
+    timer->printTimer();
+
+    if (timer != NULL)
+        delete timer;
+
+    cudaFree(dx);
+    cudaFree(dy);
+    cudaFree(dT);
+    free(x);
+    free(y);
+    free(T);
+}
+
+void setTimer(void)
+{
+    timer = new DS_timer(NUM_TIMER);
+
+    timer->initTimers();
+    timer->setTimerName(TIMER_HOST, "GPU code");
+}
