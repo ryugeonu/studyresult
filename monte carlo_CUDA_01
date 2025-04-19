@@ -4,7 +4,7 @@
 #include <random>
 
 
-#define N_DATA_FILTER           10000
+#define N_DATA_FILTER           10000000
 #define NUM_THREAD              512
 #define N_DATA                  (N_DATA_FILTER - (N_DATA_FILTER % NUM_THREAD))
 #define NUM_BLOCK               N_DATA/NUM_THREAD
