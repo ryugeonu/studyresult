@@ -22,14 +22,15 @@ __global__ void calculator(float* _x, float* _y, int* _T) {
 
     
     sA[threadIdx.x] = mask;
-    sB[threadIdx.x] = 1 - mask;
 
     __syncthreads();
 
     if (threadIdx.x == 0) {
-        for (int i = 1; i < NUM_THREAD; i++)
+        for (int i = 1; i < NUM_THREAD; i++) {
             sA[0] += sA[i];
+        }
     }
+    
     if (threadIdx.x == 0)
         atomicAdd(_T, sA[0]);
 }
@@ -80,6 +81,7 @@ int main(void) {
         cudaStreamCreate(&stream[i]);
 
     int chunksize = N_DATA / NUM_STREAM;
+
     for (int i = 0; i < NUM_STREAM; i++) {
         int offset = chunksize * i;
         cudaMemcpyAsync(dx + offset, x + offset, sizeof(float) * chunksize, cudaMemcpyHostToDevice);
@@ -92,7 +94,6 @@ int main(void) {
 
     cudaMemcpy(T, dT, sizeof(int), cudaMemcpyDeviceToHost);
 
-    cudaDeviceSynchronize();
     float approximation = 4.0f * (float)*T / (float)N_DATA;
 
     printf("총 데이터의 수: %d\n효율을 위해 필터링 된 데이터의 수: %d\n원 내에 존재하는 난수: %d\n", N_DATA_FILTER,N_DATA_FILTER-N_DATA, *T);
@@ -110,3 +111,4 @@ int main(void) {
     cudaFreeHost(y);
     free(T);
 }
+
