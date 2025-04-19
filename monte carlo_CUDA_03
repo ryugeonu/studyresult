@@ -1,0 +1,127 @@
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+
+#include <random>
+
+
+#define N_DATA_FILTER           1000000
+#define NUM_THREAD              512
+#define N_DATA                  (N_DATA_FILTER - (N_DATA_FILTER % NUM_THREAD))
+#define NUM_BLOCK               N_DATA/NUM_THREAD
+#define NUM_STREAM              4
+
+
+
+__global__ void calculator(float* _x, float* _y, int* _T) {
+    int Index = blockDim.x * blockIdx.x + threadIdx.x;
+    int mask, c = 0;
+    mask = (_x[Index] * _x[Index] + _y[Index] * _y[Index] <= 1);
+
+    __shared__ int sA[NUM_THREAD];
+    __shared__ int sB[NUM_THREAD];
+
+
+    sA[threadIdx.x] = mask;
+
+    __syncthreads();
+
+    if (threadIdx.x == 0) {
+        for (int i = 1; i < NUM_THREAD; i++) {
+            sA[0] += sA[i];
+        }
+    }
+
+    if (threadIdx.x == 0)
+        atomicAdd(_T, sA[0]);
+}
+
+int main(void) {
+
+    cudaEvent_t start[NUM_STREAM], stop[NUM_STREAM];
+
+    float* x = NULL;
+    float* y = NULL;
+    int* T = NULL;
+    float* dx = NULL;
+    float* dy = NULL;
+    int* dT = NULL;
+
+    cudaMallocHost(&x, sizeof(float) * N_DATA);
+    cudaMallocHost(&y, sizeof(float) * N_DATA);
+    T = (int*)malloc(sizeof(int) * 1);
+
+    if (x == NULL || y == NULL) {
+        printf("메모리 할당 실패\n");
+        exit(1);
+    }
+
+    std::random_device engine;
+    std::uniform_int_distribution<int> generator(0, 100000);
+
+
+    for (int i = 0; i < N_DATA; i++) {
+
+        x[i] = generator(engine) / 100000.0f;
+        y[i] = generator(engine) / 100000.0f;
+
+    }
+    *T = 0;
+
+
+    cudaMalloc(&dx, sizeof(float) * N_DATA);
+    cudaMalloc(&dy, sizeof(float) * N_DATA);
+    cudaMalloc(&dT, sizeof(int) * 1);
+
+
+    cudaMemset(dT, 0, sizeof(int) * 1);
+
+    cudaStream_t stream[NUM_STREAM];
+
+    for (int i = 0; i < NUM_STREAM; i++) {
+        cudaStreamCreate(&stream[i]);
+        cudaEventCreate(&start[i]);
+        cudaEventCreate(&stop[i]);
+    }
+    int chunksize = N_DATA / NUM_STREAM;
+
+    for (int i = 0; i < NUM_STREAM; i++) {
+        int offset = chunksize * i;
+        cudaEventRecord(start[i], stream[i]);
+        cudaMemcpyAsync(dx + offset, x + offset, sizeof(float) * chunksize, cudaMemcpyHostToDevice);
+        cudaMemcpyAsync(dy + offset, y + offset, sizeof(float) * chunksize, cudaMemcpyHostToDevice);
+        calculator << <NUM_BLOCK / NUM_STREAM, NUM_THREAD, 0, stream[i] >> > (dx + offset, dy + offset, dT);
+        cudaEventRecord(stop[i], stream[i]);
+    }
+
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(T, dT, sizeof(int), cudaMemcpyDeviceToHost);
+
+    float approximation = 4.0f * (float)*T / (float)N_DATA;
+
+    printf("총 데이터의 수: %d\n효율을 위해 필터링 된 데이터의 수: %d\n원 내에 존재하는 난수: %d\n", N_DATA_FILTER, N_DATA_FILTER - N_DATA, *T);
+    printf("추정치: %f\n", approximation);
+
+    float time[NUM_STREAM];
+    float total = 0;
+
+    for (int i = 0; i < NUM_STREAM; i++) {
+        cudaEventElapsedTime(&time[i], start[i], stop[i]);
+        printf("stream[%d]의 연산 시간 %f\n",i, time[i]);
+        total += time[i];
+    }
+
+    printf("총 연산 시간: %f\n", total);
+    for (int i = 0; i < NUM_STREAM; i++){
+        cudaStreamDestroy(stream[i]);
+        cudaEventDestroy(start[i]);
+        cudaEventDestroy(stop[i]);
+    }
+
+    cudaFree(dx);
+    cudaFree(dy);
+    cudaFree(dT);
+    cudaFreeHost(x);
+    cudaFreeHost(y);
+    free(T);
+}
