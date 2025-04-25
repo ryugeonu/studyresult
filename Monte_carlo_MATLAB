@@ -1,0 +1,23 @@
+N_DATA=10000000;
+
+X=rand(1,N_DATA);
+Y=rand(1,N_DATA);
+
+inside_circle=(X.^2+Y.^2)<=1;
+approximation=4*sum(inside_circle,'all')/numel(X);
+
+theta=linspace(0,2*pi,100);
+x_circle=cos(theta);
+y_circle=sin(theta);
+
+scatter(X(:),Y(:),1,'blue');
+hold on;
+
+scatter(X(inside_circle),Y(inside_circle),1,'red');
+
+plot(x_circle,y_circle,'k',linewidth=2);
+
+title(['n= ',num2str(numel(X))],['{\Pi}= ',num2str(approximation)]);
+
+axis equal;
+axis([0 1 0 1]);
