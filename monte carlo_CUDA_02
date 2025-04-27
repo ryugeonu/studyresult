@@ -3,23 +3,19 @@
 
 #include <random>
 #include "DS_timer.h"
-#include <thread>
 
 
 #define N_DATA_TOTAL            10000000
-#define N_DATA_CPU              (N_DATA_TOTAL/2)
-#define N_DATA_GPU              (N_DATA_TOTAL/2)
 #define NUM_THREAD              256
-#define N_DATA                  (N_DATA_GPU - (N_DATA_GPU % NUM_THREAD))
+#define N_DATA                  (N_DATA_TOTAL - (N_DATA_TOTAL % NUM_THREAD))
 #define NUM_BLOCK               N_DATA/NUM_THREAD
-#define NUM_STREAM              2
+#define NUM_STREAM              4
 
 //timer
 DS_timer* timer;
-#define TIMER_HOST_CAL		0
-#define TIMER_KERNEL_CAL	1
-#define TIMER_TOTAL		2
-#define TIMER_GPU       3
+
+#define TIMER_TOTAL		0
+#define TIMER_GPU       1
 #define NUM_TIMER		(TIMER_GPU+1)
 
 void setTimer(void);
@@ -38,23 +34,12 @@ __global__ void calculator(float* _x, float* _y, int* _T) {
 
     __syncthreads();
 
-    for (int i = NUM_THREAD / 2; i > 0; i = i / 2) {
-        __syncthreads();
-        if (threadIdx.x < i) {
-            sA[threadIdx.x] += sA[threadIdx.x + i];
-        }
+    if (threadIdx.x == 0) {
+        for (int i = 0; i < NUM_THREAD; i++)
+            c += sA[i];
+        atomicAdd(_T, c);
     }
 
-    if (threadIdx.x == 0)
-        atomicAdd(_T, sA[0]);
-}
-
-void CPU_CAL(float* cx,float* cy,int& C_T,float size) {
-
-    for (int i = 0; i < N_DATA_CPU; i++) {
-        if (cx[i] * cx[i] + cy[i] * cy[i] <= 1)
-            C_T++;
-    }
 }
 
 int main(void) {
@@ -62,16 +47,13 @@ int main(void) {
     timer = NULL; setTimer();
 
     cudaEvent_t start[NUM_STREAM], stop[NUM_STREAM];
-    float* cx = NULL;
-    float* cy = NULL;
     float* x = NULL;
     float* y = NULL;
     int* T = NULL;
     float* dx = NULL;
     float* dy = NULL;
     int* dT = NULL;
-    cx = (float*)malloc(sizeof(float) * N_DATA_CPU);
-    cy = (float*)malloc(sizeof(float) * N_DATA_CPU);
+
     cudaMallocHost(&x, sizeof(float) * N_DATA);
     cudaMallocHost(&y, sizeof(float) * N_DATA);
     T = (int*)malloc(sizeof(int) * 1);
@@ -84,18 +66,14 @@ int main(void) {
     std::random_device engine;
     std::uniform_int_distribution<int> generator(0, 100000);
 
-    for (int i = 0; i < N_DATA_CPU; i++) {
-
-        cx[i] = generator(engine) / 100000.0f;
-        cy[i] = generator(engine) / 100000.0f;
-
-    }
+    
     for (int i = 0; i < N_DATA; i++) {
 
         x[i] = generator(engine) / 100000.0f;
         y[i] = generator(engine) / 100000.0f;
 
     }
+
     *T = 0;
 
     timer->onTimer(TIMER_TOTAL);
@@ -119,35 +97,30 @@ int main(void) {
     for (int i = 0; i < NUM_STREAM; i++) {
         int offset = chunksize_GPU * i;
         cudaEventRecord(start[i], stream[i]);
-        cudaMemcpyAsync(dx + offset, x + offset, sizeof(float) * chunksize_GPU, cudaMemcpyHostToDevice,stream[i]);
-        cudaMemcpyAsync(dy + offset, y + offset, sizeof(float) * chunksize_GPU, cudaMemcpyHostToDevice,stream[i]);
+        cudaMemcpyAsync(dx + offset, x + offset, sizeof(float) * chunksize_GPU, cudaMemcpyHostToDevice, stream[i]);
+        cudaMemcpyAsync(dy + offset, y + offset, sizeof(float) * chunksize_GPU, cudaMemcpyHostToDevice, stream[i]);
         calculator << <NUM_BLOCK / NUM_STREAM, NUM_THREAD, 0, stream[i] >> > (dx + offset, dy + offset, dT);
         cudaEventRecord(stop[i], stream[i]);
     }
-   
-    timer->onTimer(TIMER_HOST_CAL);
-    int C_T = 0;
-    std::thread cpu_thread(CPU_CAL, cx, cy,std::ref(C_T), sizeof(float)*N_DATA_CPU);
-    cpu_thread.join();
- timer->offTimer(TIMER_HOST_CAL);
+
     cudaDeviceSynchronize();
-   
     timer->offTimer(TIMER_TOTAL);
+
     cudaMemcpy(T, dT, sizeof(int), cudaMemcpyDeviceToHost);
 
-    *T =*T+C_T;
-    timer->offTimer(TIMER_TOTAL);
-    float approximation = 4.0f * (float)*T / (float)(N_DATA+N_DATA_GPU);
+    int filterd = (floor(NUM_BLOCK / NUM_STREAM))*NUM_STREAM*NUM_THREAD;
+    float approximation = 4.0f * (float)*T / (float)(filterd);
 
-    printf("총 데이터의 수: %d\n효율을 위해 필터링 된 데이터의 수: %d\n원 내에 존재하는 난수: %d\n", N_DATA_TOTAL, N_DATA_GPU - N_DATA, *T);
+    printf("총 데이터의 수: %d\n효율을 위해 필터링 된 데이터의 수: %d\n원 내에 존재하는 난수: %d\n", N_DATA_TOTAL, filterd,*T);
     printf("추정치: %f\n", approximation);
+
+
     float time[NUM_STREAM];
-    
 
     for (int i = 0; i < NUM_STREAM; i++) {
         cudaEventElapsedTime(&time[i], start[i], stop[i]);
         printf("stream[%d]의 연산 시간 %f\n", i, time[i]);
-        
+
     }
 
     for (int i = 0; i < NUM_STREAM; i++) {
@@ -165,8 +138,7 @@ int main(void) {
     cudaFreeHost(x);
     cudaFreeHost(y);
     free(T);
-    free(cx);
-    free(cy);
+   
 }
 
 void setTimer(void)
@@ -174,9 +146,6 @@ void setTimer(void)
     timer = new DS_timer(NUM_TIMER);
 
     timer->initTimers();
-    timer->setTimerName(TIMER_HOST_CAL, "CPU Calculation");
-    timer->setTimerName(TIMER_KERNEL_CAL, "Kernel Calculation");
     timer->setTimerName(TIMER_TOTAL, "CPU,GPU heterogeneous Calculation");
     timer->setTimerName(TIMER_GPU, "Only GPU Calculation");
 }
-
