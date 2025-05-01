@@ -4,7 +4,7 @@
 
 
 using namespace std;
-#define N_DATA 1000000
+#define N_DATA 10000000
 
 DS_timer* timer;
 void setTimer(void);
