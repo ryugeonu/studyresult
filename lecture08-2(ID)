@@ -14,7 +14,7 @@ __global__ void checkIndex(void) {
 		, gridDim.x, gridDim.y, gridDim.z);
 }
 
-int main(int argc, char** argv) {
+int main() {
 	int nElem = 10;
 
 	dim3 block(4);
