@@ -1,4 +1,4 @@
-N_DATA=10000000;
+N_DATA=10000000; 
 
 X=rand(1,N_DATA);
 Y=rand(1,N_DATA);
